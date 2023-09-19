@@ -1,2 +1,0 @@
-- test.ipynb shows some error with windows op/sys (need to confirm working on linux) 
-- typo in readme : layout says nobrainer.tfrecords but file under nobrainer.tfrecord 
