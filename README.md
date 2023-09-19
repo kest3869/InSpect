@@ -17,5 +17,8 @@ Contains first iteration of project coded in jupyter notebooks with a keras back
 
 ### Author Details 
 Kevin Stull 
+
 CU Boulder Undergraduate in Applied Mathematics 
+
 kest3869@colorado.edu
+
