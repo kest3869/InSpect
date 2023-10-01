@@ -7,7 +7,7 @@ Development will use python instead of jupyter notebooks, have a torch backend i
 ## Instructions 
 - link to docker container: https://hub.docker.com/repository/docker/kest3869/inspect/general
 - docker pull command: docker pull kest3869/inspect:latest
-- running docker container: the script env.sh will mount the docker container in the expected structure, the data can be in this directory it's parent directory so that it remains in the scope of the docker container. The path to the data must be updated accordingly [INSERT GRAPHIC OF DATA STRUCTURE]
+- running docker container: the script env.sh will mount the docker container in the expected structure, the data can be in this directory it's parent directory so that it remains in the scope of the docker container.
 
 ## Technical Updates
 - published research approaches will be re-created and benchmarked on the problem
