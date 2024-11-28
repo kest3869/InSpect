@@ -1,1 +1,1 @@
-docker run -it --gpus all -v $(pwd)/..:/home/ --name InSpect ufoym/deepo:pytorch-py36-cu100 bash
+docker run -it --gpus all -v $(pwd)/..:/home/ --name InSpect kest3869/inspect bash -c "cd /home/Inspect && exec bash"
