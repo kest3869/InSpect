@@ -3,6 +3,7 @@ import numpy as np
 import nibabel as nib
 import torch
 from torch.utils.data import Dataset
+import matplotlib.pyplot as plt
 
 
 def generate_labels(top_dir, subsets, labels, use_unscaled):
@@ -118,6 +119,23 @@ def main():
     img, label = torch_dataset[0]
     print(f"Image shape: {img.shape}")
     print(f"Label: {label}")
+
+    # Extract a slice (e.g., middle slice along the first axis)
+    slice_index = img.shape[0] // 2
+    image_slice = img[slice_index, :, :]
+
+    # Create 'figs' directory if it doesn't exist
+    os.makedirs("figs", exist_ok=True)
+
+    # Plot and save the slice
+    plt.imshow(image_slice.numpy(), cmap='gray')
+    plt.title(f"Slice {slice_index}")
+    plt.colorbar()
+    output_path = os.path.join("figs", f"slice_{slice_index}.png")
+    plt.savefig(output_path, dpi=300)
+    plt.close()  # Close the figure to free up memory
+
+    print(f"Plot saved to {output_path}")
 
 
 if __name__ == "__main__":
