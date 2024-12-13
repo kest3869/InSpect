@@ -1,1 +1,2 @@
-docker run --rm -it --gpus all -v $(pwd)/..:/home/ --name InSpect kest3869/inspect bash -c "cd /home/InSpect && exec bash"
+#docker run -it --gpus all -v $(pwd)/..:/home/ --name InSpect kest3869/inspect bash -c "cd /home/InSpect && exec bash"
+docker run -it --rm --gpus all -v $(pwd)/..:/home/ --name InSpect kest3869/zopt:inspect bash -c "cd /home/InSpect/project && exec bash"

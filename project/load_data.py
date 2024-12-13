@@ -43,22 +43,48 @@ class NiftiDataset(Dataset):
 
     def __len__(self):
         return len(self.dataset)
-
+    
     def __getitem__(self, idx):
         file_path, label = self.dataset[idx]
         
         # Load NIfTI file
         img = nib.load(file_path).get_fdata()
 
+        # Add channel dimension
+        img = np.expand_dims(img, axis=0)  # Adds channel dimension to make [1, depth, height, width]
+
+        # Convert NumPy array to PyTorch tensor
+        img_tensor = torch.tensor(img, dtype=torch.float32)
+
+        # Apply transform if provided
+        if self.transform:
+            img_tensor = self.transform(img_tensor)  # Transforms expect PyTorch tensors now
+
+        # Convert label to tensor
+        label_tensor = torch.tensor(int(label), dtype=torch.long)
+
+        return img_tensor, label_tensor
+
+    ''' # used for cnn_train_working.py
+    def __getitem__(self, idx):
+        file_path, label = self.dataset[idx]
+        
+        # Load NIfTI file
+        img = nib.load(file_path).get_fdata()
+
+        # Add channel dimension
+        img = np.expand_dims(img, axis=0)  # Adds channel dimension to make [1, depth, height, width]
+
         # Apply transform if provided
         if self.transform:
             img = self.transform(img)
 
-        # Convert to torch tensor
-        img_tensor = torch.tensor(img, dtype=torch.float32)
+        # Convert to PyTorch tensor
+        img_tensor = torch.tensor(img, dtype=torch.float32)  # Shape: [1, depth, height, width]
         label_tensor = torch.tensor(int(label), dtype=torch.long)
 
         return img_tensor, label_tensor
+    '''
 
 
 def generate_dataset(dataset_array, transform=None):
