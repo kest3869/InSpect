@@ -1,28 +1,28 @@
-import numpy as np
 import os
+import numpy as np
+import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, WeightedRandomSampler, Subset
-import matplotlib.pyplot as plt
 from tqdm import tqdm
 from sklearn.model_selection import StratifiedKFold
-from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, classification_report
-from sklearn.metrics import precision_recall_fscore_support
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, classification_report, f1_score
 from torch.optim.lr_scheduler import StepLR
 from torchvision.transforms import Compose, RandomApply, GaussianBlur, RandomAffine
 
-from load_data import create_torch_dataset  # Assuming this returns a torch Dataset
+from load_data import create_torch_dataset
 
 
 def create_augmented_dataset():
     transform = Compose([
         RandomApply([GaussianBlur(kernel_size=3, sigma=1.5)], p=0.5),
-        RandomAffine(degrees=0, scale=(0.99, 1.03)),  # Random zoom in/out
+        RandomAffine(degrees=0, scale=(0.99, 1.03)),
     ])
     return create_torch_dataset(transform=transform)
 
 
+# citation: https://braininformatics.springeropen.com/articles/10.1186/s40708-021-00144-2#Sec3
 class SimpleCNN3D(nn.Module):
     def __init__(self, input_channels=1, num_classes=3):
         super(SimpleCNN3D, self).__init__()
@@ -64,7 +64,7 @@ class SimpleCNN3D(nn.Module):
 
         # Fully connected layers with dropout
         self.fc1 = nn.Linear(self.flatten_size, 256)
-        self.dropout = nn.Dropout(p=0.1)  # Dropout layer
+        self.dropout = nn.Dropout(p=0.1) 
         self.fc2 = nn.Linear(256, num_classes)
 
     def forward(self, x):
@@ -73,9 +73,9 @@ class SimpleCNN3D(nn.Module):
         x = self.conv3(x)
         x = self.conv4(x)
         x = self.conv5(x)
-        x = x.view(x.size(0), -1)  # Flatten
+        x = x.view(x.size(0), -1)
         x = nn.functional.elu(self.fc1(x))
-        x = self.dropout(x)  # Apply dropout here
+        x = self.dropout(x)
         x = self.fc2(x)
         return x
 
@@ -91,8 +91,9 @@ def create_balanced_sampler(dataset):
         sampler: WeightedRandomSampler for balanced sampling.
     """
     # Step 1: Count the frequency of each class
-    class_counts = np.bincount([label for _, label in dataset])  # Replace with actual dataset labels
+    class_counts = np.bincount([label for _, label in dataset])
     total_samples = len(dataset)
+
     print(f"Class Counts: {class_counts}")
 
     # Step 2: Calculate weights for each class
@@ -105,8 +106,9 @@ def create_balanced_sampler(dataset):
     # Step 4: Create WeightedRandomSampler
     sampler = WeightedRandomSampler(
         weights=sample_weights,
-        num_samples=total_samples,  # Total samples to draw in each epoch
-        replacement=True           # Samples can be drawn multiple times per epoch
+        num_samples=total_samples,
+        replacement=True,
+        drop_last = True # TODO: test false behavior
     )
     return sampler
 
@@ -149,7 +151,7 @@ def train_model_with_scheduler(
             loss.backward()
             optimizer.step()
 
-            running_loss += loss.item() * inputs.size(0)
+            running_loss += loss.item() * inputs.size(0) # TODO: consider removing
 
         # Update learning rate using the scheduler
         scheduler.step()
@@ -190,7 +192,6 @@ def train_model_with_scheduler(
     return train_loss_history, val_loss_history, val_accuracy_history
 
 
-
 def plot_training_and_validation(train_loss, val_loss, val_accuracy, output_dir="figs", output_file="training_validation_plot.jpg"):
     os.makedirs(output_dir, exist_ok=True)
 
@@ -209,9 +210,9 @@ def plot_training_and_validation(train_loss, val_loss, val_accuracy, output_dir=
     plt.close()
     print(f"Training and validation metrics plot saved to: {output_path}")
 
-
-
-def save_model_and_logs(model, optimizer, epoch, loss_history, output_dir="trained_models", fold_idx=None):
+def save_model_and_logs(
+    model, optimizer, epoch, loss_history, output_dir="trained_models", fold_idx=None, metadata=None
+):
     """
     Save the trained model checkpoint and a log file with training details for each fold.
 
@@ -222,6 +223,7 @@ def save_model_and_logs(model, optimizer, epoch, loss_history, output_dir="train
         loss_history (list): List of loss values for each epoch.
         output_dir (str): Base directory to save the model and logs.
         fold_idx (int): Index of the current fold (for naming directories).
+        metadata (dict): Additional metadata to log.
     """
     # Create a fold-specific directory
     if fold_idx is not None:
@@ -235,6 +237,7 @@ def save_model_and_logs(model, optimizer, epoch, loss_history, output_dir="train
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "loss_history": loss_history,
+        "metadata": metadata  # Include metadata in the checkpoint
     }, checkpoint_path)
     print(f"Model checkpoint saved to: {checkpoint_path}")
 
@@ -250,6 +253,10 @@ def save_model_and_logs(model, optimizer, epoch, loss_history, output_dir="train
         log_file.write("Loss History:\n")
         for i, loss in enumerate(loss_history, start=1):
             log_file.write(f"Epoch {i}: Loss = {loss:.4f}\n")
+        log_file.write("\nMetadata:\n")
+        if metadata:
+            for key, value in metadata.items():
+                log_file.write(f"{key}: {value}\n")
     print(f"Training details log saved to: {log_path}")
 
 
@@ -263,7 +270,7 @@ def evaluate_model_on_test_fold(model, data_loader, device, fold_idx):
         device: The device ('cuda' or 'cpu') on which the model is running.
         fold_idx: Current fold index (for saving results with fold-specific names).
     """
-    model.eval()  # Set model to evaluation mode
+    model.eval() 
     all_labels = []
     all_predictions = []
 
@@ -272,7 +279,7 @@ def evaluate_model_on_test_fold(model, data_loader, device, fold_idx):
         for inputs, labels in data_loader:
             inputs, labels = inputs.to(device), labels.to(device)
             outputs = model(inputs)
-            _, preds = torch.max(outputs, 1)  # Get class predictions
+            _, preds = torch.max(outputs, 1)
             all_labels.extend(labels.cpu().numpy())
             all_predictions.extend(preds.cpu().numpy())
 
@@ -300,13 +307,13 @@ def evaluate_model_on_test_fold(model, data_loader, device, fold_idx):
 
     # Calculate metrics to return
     class_accuracies = cm.diagonal() / cm.sum(axis=1)
-    balanced_accuracy = np.mean(class_accuracies)  # Balanced accuracy (mean recall)
+    balanced_accuracy = np.mean(class_accuracies)
     return balanced_accuracy
 
 
-def stratified_cross_validation(dataset, n_splits=3, batch_size=2, num_workers=4):
+def stratified_cross_validation(dataset, n_splits=3, batch_size=2, num_workers=4, sample_validation=False):
     """
-    Perform stratified 3-fold cross-validation with PyTorch.
+    Perform stratified 3-fold cross-validation with balanced sampling.
 
     Args:
         dataset: PyTorch dataset with (input, label) pairs.
@@ -325,92 +332,107 @@ def stratified_cross_validation(dataset, n_splits=3, batch_size=2, num_workers=4
 
     # Create DataLoaders for each fold
     folds = []
+    i = 0
     for train_idx, val_idx in skf.split(np.zeros(len(labels)), labels):
         # Create Subsets for train and validation
         train_subset = Subset(dataset, train_idx)
         val_subset = Subset(dataset, val_idx)
 
-        # Create DataLoaders
-        train_loader = DataLoader(
-            dataset=train_subset,
-            batch_size=batch_size,
-            shuffle=True,  # Shuffle within training fold
-            num_workers=num_workers,
-            pin_memory=True
-        )
-        val_loader = DataLoader(
-            dataset=val_subset,
-            batch_size=batch_size,
-            shuffle=False,  # No shuffle for validation
-            num_workers=num_workers,
-            pin_memory=True
-        )
-
-        # Store loaders for this fold
-        folds.append((train_loader, val_loader))
-
-    return folds
-
-
-def main(train_new_model=True, n_splits=3):
-    print("Loading dataset...")
-
-    # Load dataset
-    dataset = create_augmented_dataset()
-    labels = [label for _, label in dataset]  # Extract labels for stratification
-
-    # Define cross-validation strategy
-    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
-
-    # Cross-validation loop
-    fold_metrics = []
-    for fold_idx, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(labels)), labels)):
-        print(f"\n--- Fold {fold_idx + 1}/{n_splits} ---")
-
-        # Create train and validation subsets
-        train_subset = Subset(dataset, train_idx)
-        val_subset = Subset(dataset, val_idx)
-
-        # Create a balanced sampler for the training subset
+        # Create balanced samplers
+        print("Train sampler for fold", i+1)
         train_sampler = create_balanced_sampler(train_subset)
 
         # Create DataLoaders
         train_loader = DataLoader(
             dataset=train_subset,
-            batch_size=2, 
-            sampler=train_sampler, 
-            pin_memory=True, 
-            num_workers=4
+            batch_size=batch_size,
+            sampler=train_sampler,
+            pin_memory=True,
+            num_workers=num_workers
         )
-        val_loader = DataLoader(
-            dataset=val_subset,
-            batch_size=2, 
-            shuffle=False, 
-            pin_memory=True, 
-            num_workers=4
-        )
+        
+        if sample_validation:
+            print("Validation sampler for fold", i+1)
+            val_sampler = create_balanced_sampler(val_subset)
+            val_loader = DataLoader(
+                dataset=val_subset,
+                batch_size=batch_size,
+                sampler=val_sampler,
+                pin_memory=True,
+                num_workers=num_workers
+            )
+
+        else:
+            val_loader = DataLoader(
+                dataset=val_subset,
+                batch_size=batch_size,
+                pin_memory=True,
+                num_workers=num_workers
+            )
+
+        # Store loaders for this fold
+        folds.append((train_loader, val_loader))
+
+        i+=1
+
+    return folds
+
+
+def main(train_new_model=True, n_splits=3, sample_validation=True):
+    print("Loading dataset...")
+
+    # Load augmented dataset
+    dataset = create_augmented_dataset()
+
+    # Get stratified cross-validation folds with balanced sampling
+    folds = stratified_cross_validation(
+        dataset, 
+        n_splits=n_splits, 
+        batch_size=4, 
+        num_workers=4, 
+        sample_validation=sample_validation
+    )
+
+    # Cross-validation loop
+    fold_metrics = []
+    for fold_idx, (train_loader, val_loader) in enumerate(folds):
+        print(f"\n--- Fold {fold_idx + 1}/{n_splits} ---")
 
         # Define model, optimizer, and scheduler
         model = SimpleCNN3D(input_channels=1, num_classes=3)
         optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=0.00005)
-        scheduler = StepLR(optimizer, step_size=10, gamma=0.1)  # Example scheduler
+        scheduler = StepLR(optimizer, step_size=15, gamma=0.1)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model.to(device)
 
         if train_new_model:
             print("Training a new model...")
             criterion = nn.CrossEntropyLoss()
-            num_epochs = 2
+            num_epochs = 25
+
+            # Train the model and track metrics
             train_loss, val_loss, val_accuracy = train_model_with_scheduler(
                 model, train_loader, val_loader, criterion, optimizer, scheduler, num_epochs=num_epochs, device=device
             )
-            plot_training_and_validation(train_loss, val_loss, val_accuracy, output_dir=f"fold_{fold_idx + 1}_results")
 
-            # Save the trained model and logs for the current fold
+            # Plot training and validation metrics
+            plot_training_and_validation(
+                train_loss, val_loss, val_accuracy, output_dir=f"fold_{fold_idx + 1}_results"
+            )
+
+            # Save the trained model and logs
             save_model_and_logs(
                 model, optimizer, num_epochs, train_loss,
                 output_dir=f"trained_models/fold_{fold_idx + 1}",
-                fold_idx=fold_idx
+                fold_idx=fold_idx,
+                metadata={
+                    "sample_validation": sample_validation, 
+                    "n_splits": n_splits,
+                    "num_epochs": num_epochs,
+                    "optimizer": optimizer.__class__.__name__,
+                    "lr_scheduler": scheduler.__class__.__name__,
+                    "lr_scheduler_params": {"step_size": 45, "gamma": 0.1}
+                }
             )
         else:
             print("Pre-trained model loading is not implemented yet for cross-validation.")
