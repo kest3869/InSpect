@@ -7,25 +7,28 @@ from sklearn.model_selection import train_test_split
 import torch.optim as optim
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, classification_report
+from tqdm import tqdm
+
 
 def main():
 
     # Hyperparameters
-    n_features = [500, 500, 500]
+    n_features = [65, 900, 250]
     distributions = [
-        [0, 3, -2],  # means
-        [1, 1.5, 0.5]  # standard deviations
+        [-0.25, 0, 0.5],  # means
+        [0.3, 2.0, 1.75]  # standard deviations
     ]
     learning_rate = 0.001
     weight_decay = 0.00005
-    epochs = 40
-    use_train_sampler = False
+    epochs = 15
+    use_train_sampler = True
     use_val_sampler = False
-    output_dir = './figs/'
+    use_weighted_loss = True
+    output_dir = './scrap/'
 
     datasets_5d = make_datasets_5d(n_features, distributions)
     model = MLP_5d()
-    train_results = train(model, datasets_5d, learning_rate, weight_decay, epochs, use_train_sampler, use_val_sampler, output_dir)
+    train_results = train(model, datasets_5d, learning_rate, weight_decay, epochs, use_train_sampler, use_val_sampler, use_weighted_loss, output_dir)
     log_results(train_results, output_dir)
     test_model(train_results, make_datasets_5d(n_features, distributions,for_test=True), output_dir)
     
@@ -74,19 +77,35 @@ def log_results(train_results, output_dir='./logs/'):
     with open(metadata_path, 'w') as metadata_file:
         json.dump(train_results['metadata'], metadata_file, indent=4)
 
-def train(model, datasets_5d, learning_rate, weight_decay, epochs, use_train_sampler, use_val_sampler, output_dir):
+
+def make_weighted_loss(ds):
+    if isinstance(ds, Subset):
+        dataset = ds.dataset
+        indices = ds.indices
+        labels = dataset.labels[indices]
+    else:
+        labels = ds.labels
+
+    class_counts = torch.bincount(labels)
+    class_weights = 1 / class_counts.float()
+    class_weights = class_weights / class_weights.sum() * len(class_counts)
+    criterion = nn.CrossEntropyLoss(weight=class_weights)
+
+    return  criterion
+
+
+def train(model, datasets_5d, learning_rate, weight_decay, epochs, use_train_sampler, use_val_sampler, use_weighted_loss, output_dir='./logs/'):
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-    criterion = nn.CrossEntropyLoss()
+    if use_weighted_loss:
+        criterion = make_weighted_loss(datasets_5d['train'])
+    else:
+        criterion = nn.CrossEntropyLoss()
     train_loss_history = []
     val_loss_history = []
 
     data_loaders = make_dataloaders(datasets_5d, use_train_sampler, use_val_sampler)
-
-    for epoch in range(epochs):
-
-        if epoch % 25 == 0:
-            print(f"Training progress: {epoch} of {epochs}.")
+    for epoch in tqdm(range(epochs)):
 
         # train
         model.train()
@@ -144,7 +163,7 @@ def make_random_sampler(ds):
         labels = ds.labels
 
     class_counts = torch.bincount(labels)
-    class_weights = 1.0 / class_counts.float()
+    class_weights = 1 / class_counts.float()
     sample_weights = class_weights[labels]
     sampler = WeightedRandomSampler(sample_weights, len(labels), replacement=True)
 
@@ -182,6 +201,7 @@ def make_dataloaders(datasets_5d, use_train_sampler, use_val_sampler, for_test =
 
     return data_loaders
 
+
 def make_datasets_5d(n_features, distributions, for_test = False):
     datasets = {}
     ds = Gaussian5DDataset(n_features, distributions)
@@ -201,6 +221,7 @@ def make_datasets_5d(n_features, distributions, for_test = False):
     datasets['val'] = val_ds
     
     return datasets
+
 
 class MLP_5d(nn.Module):
     def __init__(self):
@@ -232,6 +253,7 @@ class Gaussian5DDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.data[idx], self.labels[idx]
+
 
 if __name__ == "__main__":
     main()
