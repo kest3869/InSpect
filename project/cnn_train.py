@@ -466,7 +466,7 @@ def main(train_new_model=True, n_splits=5, sample_validation=False):
         if train_new_model:
             print("Training a new model...")
             criterion = nn.CrossEntropyLoss()
-            num_epochs = 50
+            num_epochs = 250
 
             # Train the model and track metrics
             train_loss, val_loss, best_model_epoch = train_model(
