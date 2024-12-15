@@ -1,9 +1,0 @@
-{
-    "learning_rate": 0.001,
-    "weight_decay": 5e-05,
-    "epochs": 15,
-    "use_train_sampler": false,
-    "use_val_sampler": false,
-    "final_val_loss": 0.557085654065013,
-    "output_dir": "./experiment_baseline/"
-}

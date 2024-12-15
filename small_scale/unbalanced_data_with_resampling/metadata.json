@@ -1,9 +1,0 @@
-{
-    "learning_rate": 0.001,
-    "weight_decay": 5e-05,
-    "epochs": 15,
-    "use_train_sampler": true,
-    "use_val_sampler": true,
-    "final_val_loss": 0.4424630114377942,
-    "output_dir": "./unbalanced_data_with_resampling/"
-}
