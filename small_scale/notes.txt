@@ -1,0 +1,5 @@
+Mitigating the effects of unbalanced data
+1) adding weighted sampling to train dramatically improves performance
+2) while CE loss is usually proportional comparable to Cohen Kappa, 
+    Cohen Kappa is a more robust validation metric in extreme circumstances
+3) In the hard case with unbalanced data, using more data to train may have merit

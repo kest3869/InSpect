@@ -7,12 +7,17 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, WeightedRandomSampler, Subset
 from tqdm import tqdm
 from sklearn.model_selection import StratifiedKFold
-from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, classification_report, f1_score
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, classification_report
 from torch.optim.lr_scheduler import StepLR
 from torchvision.transforms import Compose, RandomApply, GaussianBlur, RandomAffine
-
+from sklearn.metrics import cohen_kappa_score
 from load_data import create_torch_dataset
 
+def validation_fnc(labels, predictions):
+    """
+    Calculate Cohen's Kappa score for validation.
+    """
+    return 1 - cohen_kappa_score(labels, predictions)
 
 def create_augmented_dataset():
     transform = Compose([
@@ -108,34 +113,34 @@ def create_balanced_sampler(dataset):
         weights=sample_weights,
         num_samples=total_samples,
         replacement=True,
-        drop_last = True # TODO: test false behavior
     )
     return sampler
 
 
-def train_model_with_scheduler(
-    model, train_loader, val_loader, criterion, optimizer, scheduler, num_epochs=20, device="cpu"
+def train_model(
+    model, train_loader, criterion, optimizer, num_epochs=20, device="cpu", patience=15
 ):
     """
-    Train a PyTorch model with a learning rate scheduler and validation tracking.
+    Train a PyTorch model with early stopping and validation tracking.
 
     Args:
         model: The PyTorch model to train.
         train_loader: DataLoader for the training set.
-        val_loader: DataLoader for the validation set.
         criterion: Loss function (e.g., nn.CrossEntropyLoss).
         optimizer: Optimizer (e.g., optim.Adam).
-        scheduler: Learning rate scheduler.
         num_epochs: Number of epochs to train.
         device: Device to train on ('cuda' or 'cpu').
+        patience: Number of epochs to wait for validation loss improvement before stopping.
 
     Returns:
-        train_loss_history, val_loss_history, val_accuracy_history
+        train_loss_history, val_loss_history, best_model_epoch
     """
     model.to(device)
     train_loss_history = []
     val_loss_history = []
-    val_accuracy_history = []
+    best_val_loss = float('inf')
+    best_model_epoch = -1
+    epochs_without_improvement = 0  # Track epochs without validation improvement
 
     for epoch in range(num_epochs):
         model.train()
@@ -151,10 +156,7 @@ def train_model_with_scheduler(
             loss.backward()
             optimizer.step()
 
-            running_loss += loss.item() * inputs.size(0) # TODO: consider removing
-
-        # Update learning rate using the scheduler
-        scheduler.step()
+            running_loss += loss.item()
 
         # Calculate average loss for the epoch
         epoch_loss = running_loss / len(train_loader.dataset)
@@ -163,52 +165,77 @@ def train_model_with_scheduler(
         # Validation phase
         model.eval()
         val_loss = 0.0
-        correct = 0
-        total = 0
-
+        all_labels, all_predictions = [], []
         with torch.no_grad():
-            for inputs, labels in val_loader:
+            for inputs, labels in train_loader:  # Intentionally using train_loader for validation metric
+                # Ensure inputs and labels are moved to the correct device
                 inputs, labels = inputs.to(device), labels.to(device)
+
+                # Forward pass
                 outputs = model(inputs)
-                loss = criterion(outputs, labels)
-                val_loss += loss.item() * inputs.size(0)
 
-                _, preds = torch.max(outputs, 1)
-                correct += (preds == labels).sum().item()
-                total += labels.size(0)
+                # Get predictions
+                _, preds = torch.max(outputs, dim=1)
 
-        val_loss = val_loss / len(val_loader.dataset)
-        val_accuracy = correct / total
+                # Collect true labels and predictions (moving back to CPU for further processing)
+                all_labels.extend(labels.cpu().numpy())
+                all_predictions.extend(preds.cpu().numpy())
 
+        val_loss = validation_fnc(all_labels, all_predictions)
         val_loss_history.append(val_loss)
-        val_accuracy_history.append(val_accuracy)
+
+        # Early stopping check
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            best_model_epoch = epoch
+            best_model_state = model.state_dict()
+            best_model_path = os.path.join(os.getcwd(), 'figs/best_model.pth')
+            torch.save(best_model_state, best_model_path)
+            epochs_without_improvement = 0  # Reset the counter if there is improvement
+        else:
+            epochs_without_improvement += 1
 
         # Print metrics for the epoch
-        print(
-            f"Epoch {epoch + 1}/{num_epochs}, Train Loss: {epoch_loss:.4f}, "
-            f"Val Loss: {val_loss:.4f}, Val Accuracy: {val_accuracy:.4f}, LR: {scheduler.get_last_lr()[0]:.6f}"
-        )
+        print(f"Epoch {epoch + 1}/{num_epochs}, Train Loss: {epoch_loss:.4f}")
+        print(f"Epoch {epoch + 1}/{num_epochs}, Validation Loss: {val_loss:.4f}")
 
-    return train_loss_history, val_loss_history, val_accuracy_history
+        # Stop training if no improvement for 'patience' epochs
+        if epochs_without_improvement >= patience:
+            print(f"Early stopping triggered after {patience} epochs without improvement.")
+            break
+
+    return train_loss_history, val_loss_history, best_model_epoch
 
 
-def plot_training_and_validation(train_loss, val_loss, val_accuracy, output_dir="figs", output_file="training_validation_plot.jpg"):
+def plot_training_and_validation(train_loss, val_loss, best_model_epoch, output_dir="figs", output_file="training_validation_plot.jpg"):
     os.makedirs(output_dir, exist_ok=True)
 
     plt.figure(figsize=(12, 6))
     plt.plot(train_loss, label="Train Loss", color="blue")
     plt.plot(val_loss, label="Val Loss", color="orange")
-    plt.plot(val_accuracy, label="Val Accuracy", color="green")
+    
+    # Add a dot at the best model epoch
+    plt.scatter(
+        best_model_epoch, 
+        val_loss[best_model_epoch], 
+        color="red", 
+        label=f"Best Model Epoch ({best_model_epoch})", 
+        zorder=5
+    )
+    
+    # Add labels and styling
     plt.xlabel("Epoch")
     plt.ylabel("Metric")
     plt.title("Training and Validation Metrics")
     plt.legend()
     plt.grid(True)
 
+    # Save the plot
     output_path = os.path.join(output_dir, output_file)
     plt.savefig(output_path, dpi=300, bbox_inches="tight")
     plt.close()
     print(f"Training and validation metrics plot saved to: {output_path}")
+
 
 def save_model_and_logs(
     model, optimizer, epoch, loss_history, output_dir="trained_models", fold_idx=None, metadata=None
@@ -269,8 +296,19 @@ def evaluate_model_on_test_fold(model, data_loader, device, fold_idx):
         data_loader: DataLoader for the validation/test fold.
         device: The device ('cuda' or 'cpu') on which the model is running.
         fold_idx: Current fold index (for saving results with fold-specific names).
+
+    Returns:
+        balanced_accuracy: Balanced accuracy for the fold.
     """
-    model.eval() 
+    # Load the best model state from file
+    best_model_path = os.path.join(os.getcwd(), 'figs/best_model.pth')
+    if not os.path.exists(best_model_path):
+        raise FileNotFoundError(f"Best model file not found at: {best_model_path}")
+    
+    model.load_state_dict(torch.load(best_model_path, map_location=device))
+    model.to(device)
+    model.eval()
+    
     all_labels = []
     all_predictions = []
 
@@ -299,25 +337,26 @@ def evaluate_model_on_test_fold(model, data_loader, device, fold_idx):
     print(f"Confusion matrix saved to: {cm_path}")
 
     # Save classification report
-    report = classification_report(all_labels, all_predictions, target_names=["Class 0", "Class 1", "Class 2"], digits=2)
+    report = classification_report(all_labels, all_predictions, target_names=["healthy", "ptsd", "pure_Mdd"], digits=2)
     report_path = os.path.join(output_dir, f"classification_report_fold_{fold_idx + 1}.txt")
     with open(report_path, "w") as f:
         f.write(report)
     print(f"Classification report saved to: {report_path}")
 
     # Calculate metrics to return
-    class_accuracies = cm.diagonal() / cm.sum(axis=1)
-    balanced_accuracy = np.mean(class_accuracies)
+    
+    balanced_accuracy = 1 - validation_fnc(all_labels, all_predictions) # REFACTORED TO GIVE COHEN KAPPA SCORE
     return balanced_accuracy
 
 
-def stratified_cross_validation(dataset, n_splits=3, batch_size=2, num_workers=4, sample_validation=False):
+
+def stratified_cross_validation(dataset, n_splits=5, batch_size=2, num_workers=4, sample_validation=False):
     """
     Perform stratified 3-fold cross-validation with balanced sampling.
 
     Args:
         dataset: PyTorch dataset with (input, label) pairs.
-        n_splits: Number of folds for cross-validation (default: 3).
+        n_splits: Number of folds for cross-validation (default: 5).
         batch_size: Batch size for DataLoader.
         num_workers: Number of DataLoader workers.
 
@@ -328,7 +367,7 @@ def stratified_cross_validation(dataset, n_splits=3, batch_size=2, num_workers=4
     labels = [label for _, label in dataset]
 
     # Initialize StratifiedKFold
-    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+    skf = StratifiedKFold(n_splits=n_splits, shuffle=True)
 
     # Create DataLoaders for each fold
     folds = []
@@ -354,7 +393,7 @@ def stratified_cross_validation(dataset, n_splits=3, batch_size=2, num_workers=4
         if sample_validation:
             print("Validation sampler for fold", i+1)
             val_sampler = create_balanced_sampler(val_subset)
-            val_loader = DataLoader(
+            test_loader = DataLoader(
                 dataset=val_subset,
                 batch_size=batch_size,
                 sampler=val_sampler,
@@ -363,7 +402,7 @@ def stratified_cross_validation(dataset, n_splits=3, batch_size=2, num_workers=4
             )
 
         else:
-            val_loader = DataLoader(
+            test_loader = DataLoader(
                 dataset=val_subset,
                 batch_size=batch_size,
                 pin_memory=True,
@@ -371,14 +410,34 @@ def stratified_cross_validation(dataset, n_splits=3, batch_size=2, num_workers=4
             )
 
         # Store loaders for this fold
-        folds.append((train_loader, val_loader))
+        folds.append((train_loader, test_loader))
 
         i+=1
 
     return folds
 
 
-def main(train_new_model=True, n_splits=3, sample_validation=True):
+# Assuming fold_metrics is a list of Kappa scores across folds
+def save_cross_validation_results(output_dir, fold_metrics):
+    os.makedirs(output_dir, exist_ok=True)  # Ensure the output directory exists
+
+    # Summary of cross-validation results
+    results_summary = (
+        "Cross-validation complete.\n"
+        f"Cohen Kappa Across Folds: {np.mean(fold_metrics):.2f}\n"
+        f"Standard Deviation Across Folds: {np.std(fold_metrics):.2f}\n"
+        f"Individual Fold Metrics: {fold_metrics}\n"
+    )
+
+    # Save to a file
+    results_path = os.path.join(output_dir, "cross_validation_results.txt")
+    with open(results_path, "w") as f:
+        f.write(results_summary)
+
+    print(f"Cross-validation results saved to {results_path}")
+
+
+def main(train_new_model=True, n_splits=5, sample_validation=False):
     print("Loading dataset...")
 
     # Load augmented dataset
@@ -398,26 +457,25 @@ def main(train_new_model=True, n_splits=3, sample_validation=True):
     for fold_idx, (train_loader, val_loader) in enumerate(folds):
         print(f"\n--- Fold {fold_idx + 1}/{n_splits} ---")
 
-        # Define model, optimizer, and scheduler
+        # Define model, optimizer
         model = SimpleCNN3D(input_channels=1, num_classes=3)
         optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=0.00005)
-        scheduler = StepLR(optimizer, step_size=15, gamma=0.1)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model.to(device)
 
         if train_new_model:
             print("Training a new model...")
             criterion = nn.CrossEntropyLoss()
-            num_epochs = 25
+            num_epochs = 50
 
             # Train the model and track metrics
-            train_loss, val_loss, val_accuracy = train_model_with_scheduler(
-                model, train_loader, val_loader, criterion, optimizer, scheduler, num_epochs=num_epochs, device=device
+            train_loss, val_loss, best_model_epoch = train_model(
+                model, train_loader, criterion, optimizer, num_epochs=num_epochs, device=device
             )
 
             # Plot training and validation metrics
             plot_training_and_validation(
-                train_loss, val_loss, val_accuracy, output_dir=f"fold_{fold_idx + 1}_results"
+                train_loss, val_loss, best_model_epoch, output_dir=f"fold_{fold_idx + 1}_results"
             )
 
             # Save the trained model and logs
@@ -430,8 +488,8 @@ def main(train_new_model=True, n_splits=3, sample_validation=True):
                     "n_splits": n_splits,
                     "num_epochs": num_epochs,
                     "optimizer": optimizer.__class__.__name__,
-                    "lr_scheduler": scheduler.__class__.__name__,
-                    "lr_scheduler_params": {"step_size": 45, "gamma": 0.1}
+                    "lr_scheduler_params": {"step_size": 100, "gamma": 0.1},
+                    'best_model_epoch' : best_model_epoch
                 }
             )
         else:
@@ -441,11 +499,13 @@ def main(train_new_model=True, n_splits=3, sample_validation=True):
         print("Evaluating the model...")
         fold_accuracy = evaluate_model_on_test_fold(model, val_loader, device, fold_idx)
         fold_metrics.append(fold_accuracy)
-        print(f"Fold {fold_idx + 1} Balanced Accuracy: {fold_accuracy:.2f}")
+        print(f"Fold {fold_idx + 1} Cohen_cappa: {fold_accuracy:.2f}")
 
     # Summary of cross-validation results
     print("\nCross-validation complete.")
-    print(f"Average Balanced Accuracy Across Folds: {np.mean(fold_metrics):.2f}")
+    print(f"Cohen Kappa Across Folds: {np.mean(fold_metrics):.2f}")
+    save_cross_validation_results(output_dir="./logs/", fold_metrics=fold_metrics)
+
 
 
 if __name__ == "__main__":

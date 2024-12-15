@@ -2,8 +2,8 @@
     "metadata": {
         "n_features": [
             65,
-            900,
-            250
+            250,
+            900
         ],
         "n_features_test": [
             3000,
@@ -24,19 +24,24 @@
         ],
         "learning_rate": 0.001,
         "weight_decay": 5e-05,
-        "epochs": 25,
+        "epochs": 2000,
         "use_train_sampler": true,
         "use_val_sampler": false,
         "use_weighted_loss_train": false,
-        "use_weighted_loss_val": false,
-        "alpha": 1.1,
-        "beta": 0.9,
+        "alpha": 1.0,
+        "beta": 1.0,
+        "eta_min": 1e-05,
+        "data_augmentation": false,
         "output_dir": "./tests/scrap/"
     },
     "results": {
-        "best_val_loss": 0.9182899327654588,
+        "best_val_loss": 0.5594819248684846,
+        "Cohens Kappa Score": 0.4405180751315154,
         "best_model_path": "./tests/scrap/best_model.pth",
-        "best_model_epoch": 21,
+        "best_model_epoch": 731,
+        "best_val_ce_loss": 0.8152752820119606,
+        "best_model_ce_path": "./tests/scrap/best_model_ce.pth",
+        "best_model_ce_epoch": 1455,
         "last_model_path": "./tests/scrap/last_model.pth"
     }
 }
