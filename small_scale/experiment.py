@@ -17,7 +17,7 @@ def main():
 
     # Define Hyperparameters
     hyperparameters = {
-        'n_features': [65, 250, 900], # training and validation
+        'n_features': [65, 900, 250], # training and validation
         'n_features_test' : [3000, 3000, 3000], # testing
         'distributions': [
             [-0.15, 0, 0.2],  # means
@@ -25,7 +25,7 @@ def main():
         ],
         'learning_rate': 0.001, # ADAM
         'weight_decay': 0.00005, # ADAM
-        'epochs': 2000,
+        'epochs': 100,
         'use_train_sampler': True,
         'use_val_sampler': False,
         'use_weighted_loss_train' : False,
@@ -129,7 +129,7 @@ def train(model, datasets_5d, hyperparameters):
         val_ce_loss = 0.0
 
         with torch.no_grad():
-            for inputs, labels in data_loaders['train']: # WARNING: USING TRAIN INSTEAD OF VAL
+            for inputs, labels in data_loaders['val']:
                 outputs = model(inputs)
                 
                 # Compute Cross-Entropy loss
@@ -141,7 +141,7 @@ def train(model, datasets_5d, hyperparameters):
                 all_labels.extend(labels.cpu().numpy())
                 all_predictions.extend(preds.cpu().numpy())
 
-        val_ce_loss /= len(data_loaders['train']) # WARNING: USING TRAIN INSTEAD OF VAL
+        val_ce_loss /= len(data_loaders['val'])
         val_ce_loss_history.append(val_ce_loss)
 
         # Compute custom validation loss
@@ -438,7 +438,7 @@ def make_datasets_5d(n_features, distributions, for_test = False):
     indices = list(range(len(ds)))
     train_indices, val_indices = train_test_split(
         indices, 
-        test_size=0.99, 
+        test_size=0.10, 
         shuffle=True, 
     )
     

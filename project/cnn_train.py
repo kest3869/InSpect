@@ -12,6 +12,7 @@ from torch.optim.lr_scheduler import StepLR
 from torchvision.transforms import Compose, RandomApply, GaussianBlur, RandomAffine
 from sklearn.metrics import cohen_kappa_score
 from load_data import create_torch_dataset
+from sklearn.model_selection import train_test_split
 
 def validation_fnc(labels, predictions):
     """
@@ -118,7 +119,7 @@ def create_balanced_sampler(dataset):
 
 
 def train_model(
-    model, train_loader, criterion, optimizer, num_epochs=20, device="cpu", patience=15
+    model, train_loader, val_loader, criterion, optimizer, num_epochs=20, device="cpu", patience=15
 ):
     """
     Train a PyTorch model with early stopping and validation tracking.
@@ -126,6 +127,7 @@ def train_model(
     Args:
         model: The PyTorch model to train.
         train_loader: DataLoader for the training set.
+        val_loader: DataLoader for the validation set.
         criterion: Loss function (e.g., nn.CrossEntropyLoss).
         optimizer: Optimizer (e.g., optim.Adam).
         num_epochs: Number of epochs to train.
@@ -167,7 +169,7 @@ def train_model(
         val_loss = 0.0
         all_labels, all_predictions = [], []
         with torch.no_grad():
-            for inputs, labels in train_loader:  # Intentionally using train_loader for validation metric
+            for inputs, labels in val_loader:  # Use val_loader for validation
                 # Ensure inputs and labels are moved to the correct device
                 inputs, labels = inputs.to(device), labels.to(device)
 
@@ -177,7 +179,7 @@ def train_model(
                 # Get predictions
                 _, preds = torch.max(outputs, dim=1)
 
-                # Collect true labels and predictions (moving back to CPU for further processing)
+                # Collect true labels and predictions
                 all_labels.extend(labels.cpu().numpy())
                 all_predictions.extend(preds.cpu().numpy())
 
@@ -205,6 +207,7 @@ def train_model(
             break
 
     return train_loss_history, val_loss_history, best_model_epoch
+
 
 
 def plot_training_and_validation(train_loss, val_loss, best_model_epoch, output_dir="figs", output_file="training_validation_plot.jpg"):
@@ -329,7 +332,7 @@ def evaluate_model_on_test_fold(model, data_loader, device, fold_idx):
     output_dir = f"fold_{fold_idx + 1}_results"
     os.makedirs(output_dir, exist_ok=True)
     cm_path = os.path.join(output_dir, f"confusion_matrix_fold_{fold_idx + 1}.jpg")
-    disp = ConfusionMatrixDisplay(confusion_matrix=cm_normalized, display_labels=["Class 0", "Class 1", "Class 2"])
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm_normalized, display_labels=["healthy", "ptsd", "pure_Mdd"])
     disp.plot(cmap=plt.cm.Blues)
     plt.title(f"Confusion Matrix (Fold {fold_idx + 1})")
     plt.savefig(cm_path, dpi=300)
@@ -349,37 +352,47 @@ def evaluate_model_on_test_fold(model, data_loader, device, fold_idx):
     return balanced_accuracy
 
 
-
-def stratified_cross_validation(dataset, n_splits=5, batch_size=2, num_workers=4, sample_validation=False):
+def stratified_cross_validation(dataset, n_splits=5, batch_size=2, num_workers=4, train_val_split=0.9):
     """
-    Perform stratified 3-fold cross-validation with balanced sampling.
+    Perform stratified cross-validation with train, validation, and test splits.
 
     Args:
         dataset: PyTorch dataset with (input, label) pairs.
         n_splits: Number of folds for cross-validation (default: 5).
         batch_size: Batch size for DataLoader.
         num_workers: Number of DataLoader workers.
+        train_val_split: Ratio for splitting train into train/val (default: 0.9).
 
     Returns:
-        List of (train_loader, val_loader) tuples for each fold.
+        List of (train_loader, val_loader, test_loader) tuples for each fold.
     """
     # Extract labels for stratification
     labels = [label for _, label in dataset]
 
     # Initialize StratifiedKFold
-    skf = StratifiedKFold(n_splits=n_splits, shuffle=True)
+    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
 
     # Create DataLoaders for each fold
     folds = []
-    i = 0
-    for train_idx, val_idx in skf.split(np.zeros(len(labels)), labels):
-        # Create Subsets for train and validation
-        train_subset = Subset(dataset, train_idx)
-        val_subset = Subset(dataset, val_idx)
+    for fold_idx, (train_val_idx, test_idx) in enumerate(skf.split(np.zeros(len(labels)), labels)):
+        # Create Subsets for train+val and test
+        train_val_subset = Subset(dataset, train_val_idx)
+        test_subset = Subset(dataset, test_idx)
 
-        # Create balanced samplers
-        print("Train sampler for fold", i+1)
+        # Split train_val into train and val
+        train_val_labels = [labels[i] for i in train_val_idx]
+        train_idx, val_idx = train_test_split(
+            range(len(train_val_idx)), 
+            test_size=(1 - train_val_split), 
+            stratify=train_val_labels, 
+            random_state=fold_idx
+        )
+        train_subset = Subset(train_val_subset, train_idx)
+        val_subset = Subset(train_val_subset, val_idx)
+
+        # Create random samplers for train and val
         train_sampler = create_balanced_sampler(train_subset)
+        val_sampler = create_balanced_sampler(val_subset)
 
         # Create DataLoaders
         train_loader = DataLoader(
@@ -389,32 +402,25 @@ def stratified_cross_validation(dataset, n_splits=5, batch_size=2, num_workers=4
             pin_memory=True,
             num_workers=num_workers
         )
-        
-        if sample_validation:
-            print("Validation sampler for fold", i+1)
-            val_sampler = create_balanced_sampler(val_subset)
-            test_loader = DataLoader(
-                dataset=val_subset,
-                batch_size=batch_size,
-                sampler=val_sampler,
-                pin_memory=True,
-                num_workers=num_workers
-            )
-
-        else:
-            test_loader = DataLoader(
-                dataset=val_subset,
-                batch_size=batch_size,
-                pin_memory=True,
-                num_workers=num_workers
-            )
+        val_loader = DataLoader(
+            dataset=val_subset,
+            batch_size=batch_size,
+            sampler=val_sampler,
+            pin_memory=True,
+            num_workers=num_workers
+        )
+        test_loader = DataLoader(
+            dataset=test_subset,
+            batch_size=batch_size,
+            pin_memory=True,
+            num_workers=num_workers
+        )
 
         # Store loaders for this fold
-        folds.append((train_loader, test_loader))
-
-        i+=1
+        folds.append((train_loader, val_loader, test_loader))
 
     return folds
+
 
 
 # Assuming fold_metrics is a list of Kappa scores across folds
@@ -437,7 +443,15 @@ def save_cross_validation_results(output_dir, fold_metrics):
     print(f"Cross-validation results saved to {results_path}")
 
 
-def main(train_new_model=True, n_splits=5, sample_validation=False):
+def main(train_new_model=True, n_splits=5):
+    """
+    Main function for running stratified cross-validation on the dataset.
+
+    Args:
+        train_new_model (bool): Whether to train a new model or load a pre-trained one.
+        n_splits (int): Number of folds for cross-validation.
+        sample_validation (bool): Whether to use balanced sampling for validation.
+    """
     print("Loading dataset...")
 
     # Load augmented dataset
@@ -445,19 +459,18 @@ def main(train_new_model=True, n_splits=5, sample_validation=False):
 
     # Get stratified cross-validation folds with balanced sampling
     folds = stratified_cross_validation(
-        dataset, 
-        n_splits=n_splits, 
-        batch_size=4, 
-        num_workers=4, 
-        sample_validation=sample_validation
+        dataset,
+        n_splits=n_splits,
+        batch_size=4,
+        num_workers=4
     )
 
     # Cross-validation loop
     fold_metrics = []
-    for fold_idx, (train_loader, val_loader) in enumerate(folds):
+    for fold_idx, (train_loader, val_loader, test_loader) in enumerate(folds):
         print(f"\n--- Fold {fold_idx + 1}/{n_splits} ---")
 
-        # Define model, optimizer
+        # Define model and optimizer
         model = SimpleCNN3D(input_channels=1, num_classes=3)
         optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=0.00005)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -470,7 +483,7 @@ def main(train_new_model=True, n_splits=5, sample_validation=False):
 
             # Train the model and track metrics
             train_loss, val_loss, best_model_epoch = train_model(
-                model, train_loader, criterion, optimizer, num_epochs=num_epochs, device=device
+                model, train_loader, val_loader, criterion, optimizer, num_epochs=num_epochs, device=device
             )
 
             # Plot training and validation metrics
@@ -484,26 +497,27 @@ def main(train_new_model=True, n_splits=5, sample_validation=False):
                 output_dir=f"trained_models/fold_{fold_idx + 1}",
                 fold_idx=fold_idx,
                 metadata={
-                    "sample_validation": sample_validation, 
                     "n_splits": n_splits,
                     "num_epochs": num_epochs,
                     "optimizer": optimizer.__class__.__name__,
                     "lr_scheduler_params": {"step_size": 100, "gamma": 0.1},
-                    'best_model_epoch' : best_model_epoch
-                }
+                    "best_model_epoch": best_model_epoch,
+                },
             )
         else:
             print("Pre-trained model loading is not implemented yet for cross-validation.")
 
-        # Evaluate the model on the validation fold
-        print("Evaluating the model...")
-        fold_accuracy = evaluate_model_on_test_fold(model, val_loader, device, fold_idx)
+        # Evaluate the model on the test fold
+        print("Evaluating the model on the test fold...")
+        fold_accuracy = evaluate_model_on_test_fold(model, test_loader, device, fold_idx)
         fold_metrics.append(fold_accuracy)
-        print(f"Fold {fold_idx + 1} Cohen_cappa: {fold_accuracy:.2f}")
+        print(f"Fold {fold_idx + 1} Cohen Kappa: {fold_accuracy:.2f}")
 
-    # Summary of cross-validation results
+    # Summarize cross-validation results
     print("\nCross-validation complete.")
-    print(f"Cohen Kappa Across Folds: {np.mean(fold_metrics):.2f}")
+    print(f"Average Cohen Kappa Across Folds: {np.mean(fold_metrics):.2f}")
+
+    # Save cross-validation results to a log file
     save_cross_validation_results(output_dir="./logs/", fold_metrics=fold_metrics)
 
 

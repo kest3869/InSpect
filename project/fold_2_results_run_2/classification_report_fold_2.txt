@@ -1,0 +1,9 @@
+              precision    recall  f1-score   support
+
+     healthy       0.26      0.80      0.39        15
+        ptsd       0.71      0.58      0.64       133
+    pure_Mdd       0.40      0.36      0.38        59
+
+    accuracy                           0.53       207
+   macro avg       0.46      0.58      0.47       207
+weighted avg       0.59      0.53      0.55       207
