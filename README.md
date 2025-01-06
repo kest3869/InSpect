@@ -1,6 +1,10 @@
 # InSpect v2.0
 Classifying SPECT scans of psychiatric pathologies using deep learning techniques. 
 
+## Reader's Note
+- the full scale implmentation of InSPECT can be found in the project folder
+- the small-scale folder contains a toy problem which was used to explore the limitations of an extremely unbalanced dataset
+
 ## Docker Instructions 
 - link to docker container: https://hub.docker.com/repository/docker/kest3869/inspect/general
 - docker pull command: docker pull kest3869/inspect:latest
