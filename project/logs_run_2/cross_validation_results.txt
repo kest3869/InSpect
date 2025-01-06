@@ -1,4 +1,0 @@
-Cross-validation complete.
-Cohen Kappa Across Folds: 0.11
-Standard Deviation Across Folds: 0.04
-Individual Fold Metrics: [0.1092226246865422, 0.18358136130763614, 0.10766246362754606, 0.04533548257102571, 0.11369819677317317]
