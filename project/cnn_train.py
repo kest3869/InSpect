@@ -290,7 +290,7 @@ def save_model_and_logs(
     print(f"Training details log saved to: {log_path}")
 
 
-def evaluate_model_on_test_fold(model, data_loader, device, fold_idx):
+def evaluate_model_on_test_fold(model, data_loader, device, fold_idx, num_classes=3):
     """
     Evaluate the model on the validation/test fold and save metrics for the fold.
 
@@ -299,6 +299,7 @@ def evaluate_model_on_test_fold(model, data_loader, device, fold_idx):
         data_loader: DataLoader for the validation/test fold.
         device: The device ('cuda' or 'cpu') on which the model is running.
         fold_idx: Current fold index (for saving results with fold-specific names).
+        num_classes: Number of classes in the classification task (default: 3).
 
     Returns:
         balanced_accuracy: Balanced accuracy for the fold.
@@ -325,14 +326,16 @@ def evaluate_model_on_test_fold(model, data_loader, device, fold_idx):
             all_predictions.extend(preds.cpu().numpy())
 
     # Generate confusion matrix
-    cm = confusion_matrix(all_labels, all_predictions, labels=list(range(3)))
-    cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+    class_labels = list(range(num_classes))
+    target_names = [f"Class {i}" for i in class_labels] if num_classes > 2 else ["Negative", "Positive"]
+    cm = confusion_matrix(all_labels, all_predictions, labels=class_labels)
+    cm_normalized = cm.astype('float') / cm.sum(axis=1, keepdims=True)
 
     # Save confusion matrix plot
     output_dir = f"fold_{fold_idx + 1}_results"
     os.makedirs(output_dir, exist_ok=True)
     cm_path = os.path.join(output_dir, f"confusion_matrix_fold_{fold_idx + 1}.jpg")
-    disp = ConfusionMatrixDisplay(confusion_matrix=cm_normalized, display_labels=["healthy", "ptsd", "pure_Mdd"])
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm_normalized, display_labels=target_names)
     disp.plot(cmap=plt.cm.Blues)
     plt.title(f"Confusion Matrix (Fold {fold_idx + 1})")
     plt.savefig(cm_path, dpi=300)
@@ -340,15 +343,14 @@ def evaluate_model_on_test_fold(model, data_loader, device, fold_idx):
     print(f"Confusion matrix saved to: {cm_path}")
 
     # Save classification report
-    report = classification_report(all_labels, all_predictions, target_names=["healthy", "ptsd", "pure_Mdd"], digits=2)
+    report = classification_report(all_labels, all_predictions, target_names=target_names, digits=2)
     report_path = os.path.join(output_dir, f"classification_report_fold_{fold_idx + 1}.txt")
     with open(report_path, "w") as f:
         f.write(report)
     print(f"Classification report saved to: {report_path}")
 
     # Calculate metrics to return
-    
-    balanced_accuracy = 1 - validation_fnc(all_labels, all_predictions) # REFACTORED TO GIVE COHEN KAPPA SCORE
+    balanced_accuracy = 1 - validation_fnc(all_labels, all_predictions)  # Refactored to give Cohen's Kappa score
     return balanced_accuracy
 
 
@@ -442,20 +444,48 @@ def save_cross_validation_results(output_dir, fold_metrics):
 
     print(f"Cross-validation results saved to {results_path}")
 
+def create_binary_dataset(original_dataset, class_mapping=None):
+    """
+    Convert a multi-class dataset into a binary dataset.
 
-def main(train_new_model=True, n_splits=5):
+    Args:
+        original_dataset: The original PyTorch dataset with multi-class labels.
+        class_mapping (dict): A dictionary mapping original labels to binary labels.
+
+    Returns:
+        binary_dataset: The modified dataset with binary labels.
+    """
+    if class_mapping is None:
+        raise ValueError("class_mapping must be provided to map multi-class labels to binary labels.")
+
+    # Create a new dataset with binary labels
+    binary_data = []
+    for data, label in original_dataset:
+        if label in class_mapping:
+            binary_data.append((data, class_mapping[label]))
+
+    return binary_data
+
+
+def main(train_new_model=True, n_splits=2, binary_classification=True):
     """
     Main function for running stratified cross-validation on the dataset.
 
     Args:
         train_new_model (bool): Whether to train a new model or load a pre-trained one.
         n_splits (int): Number of folds for cross-validation.
-        sample_validation (bool): Whether to use balanced sampling for validation.
+        binary_classification (bool): Whether to perform binary or multi-class classification.
     """
     print("Loading dataset...")
 
     # Load augmented dataset
     dataset = create_augmented_dataset()
+
+    # Convert dataset for binary classification if required
+    if binary_classification:
+        print("Converting dataset to binary classification...")
+        class_mapping = {0: 0, 1: 1, 2: 1}  # Combine classes 1 and 2 into class 1
+        dataset = create_binary_dataset(dataset, class_mapping)
 
     # Get stratified cross-validation folds with balanced sampling
     folds = stratified_cross_validation(
@@ -471,14 +501,14 @@ def main(train_new_model=True, n_splits=5):
         print(f"\n--- Fold {fold_idx + 1}/{n_splits} ---")
 
         # Define model and optimizer
-        model = SimpleCNN3D(input_channels=1, num_classes=3)
+        model = SimpleCNN3D(input_channels=1, num_classes=2 if binary_classification else 3)
         optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=0.00005)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model.to(device)
 
         if train_new_model:
             print("Training a new model...")
-            criterion = nn.CrossEntropyLoss()
+            criterion = nn.BCEWithLogitsLoss() if binary_classification else nn.CrossEntropyLoss()
             num_epochs = 250
 
             # Train the model and track metrics
@@ -497,6 +527,7 @@ def main(train_new_model=True, n_splits=5):
                 output_dir=f"trained_models/fold_{fold_idx + 1}",
                 fold_idx=fold_idx,
                 metadata={
+                    "binary_classification": binary_classification,
                     "n_splits": n_splits,
                     "num_epochs": num_epochs,
                     "optimizer": optimizer.__class__.__name__,
@@ -509,17 +540,16 @@ def main(train_new_model=True, n_splits=5):
 
         # Evaluate the model on the test fold
         print("Evaluating the model on the test fold...")
-        fold_accuracy = evaluate_model_on_test_fold(model, test_loader, device, fold_idx)
+        fold_accuracy = evaluate_model_on_test_fold(model, test_loader, device, fold_idx, num_classes=2 if binary_classification else 3)
         fold_metrics.append(fold_accuracy)
-        print(f"Fold {fold_idx + 1} Cohen Kappa: {fold_accuracy:.2f}")
+        print(f"Fold {fold_idx + 1} Accuracy: {fold_accuracy:.2f}")
 
     # Summarize cross-validation results
     print("\nCross-validation complete.")
-    print(f"Average Cohen Kappa Across Folds: {np.mean(fold_metrics):.2f}")
+    print(f"Average Accuracy Across Folds: {np.mean(fold_metrics):.2f}")
 
     # Save cross-validation results to a log file
     save_cross_validation_results(output_dir="./logs/", fold_metrics=fold_metrics)
-
 
 
 if __name__ == "__main__":
