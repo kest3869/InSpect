@@ -12,7 +12,7 @@ Contains first iteration of project coded in jupyter notebooks which used keras
 ### Author Details 
 Kevin Stull 
 
-CU Boulder graduate student in Applied Mathematics 
+CU Boulder graduate student in applied mathematics 
 
 kest3869@colorado.edu
 

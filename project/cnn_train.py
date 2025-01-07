@@ -118,8 +118,13 @@ def create_balanced_sampler(dataset):
     return sampler
 
 
+import os
+import torch
+from tqdm import tqdm
+
+
 def train_model(
-    model, train_loader, val_loader, criterion, optimizer, num_epochs=20, device="cpu", patience=15
+    model, train_loader, val_loader, criterion, optimizer, num_epochs=20, device="cpu", patience=25
 ):
     """
     Train a PyTorch model with early stopping and validation tracking.
@@ -167,7 +172,6 @@ def train_model(
         # Validation phase
         model.eval()
         val_loss = 0.0
-        all_labels, all_predictions = [], []
         with torch.no_grad():
             for inputs, labels in val_loader:  # Use val_loader for validation
                 # Ensure inputs and labels are moved to the correct device
@@ -176,14 +180,11 @@ def train_model(
                 # Forward pass
                 outputs = model(inputs)
 
-                # Get predictions
-                _, preds = torch.max(outputs, dim=1)
+                # Compute validation loss for this batch
+                val_loss += criterion(outputs, labels).item()
 
-                # Collect true labels and predictions
-                all_labels.extend(labels.cpu().numpy())
-                all_predictions.extend(preds.cpu().numpy())
-
-        val_loss = validation_fnc(all_labels, all_predictions)
+        # Calculate average validation loss for the epoch
+        val_loss /= len(val_loader)
         val_loss_history.append(val_loss)
 
         # Early stopping check
@@ -207,7 +208,6 @@ def train_model(
             break
 
     return train_loss_history, val_loss_history, best_model_epoch
-
 
 
 def plot_training_and_validation(train_loss, val_loss, best_model_epoch, output_dir="figs", output_file="training_validation_plot.jpg"):
@@ -401,20 +401,20 @@ def stratified_cross_validation(dataset, n_splits=5, batch_size=2, num_workers=4
             dataset=train_subset,
             batch_size=batch_size,
             sampler=train_sampler,
-            pin_memory=True,
+            pin_memory=False,
             num_workers=num_workers
         )
         val_loader = DataLoader(
             dataset=val_subset,
             batch_size=batch_size,
             sampler=val_sampler,
-            pin_memory=True,
+            pin_memory=False,
             num_workers=num_workers
         )
         test_loader = DataLoader(
             dataset=test_subset,
             batch_size=batch_size,
-            pin_memory=True,
+            pin_memory=False,
             num_workers=num_workers
         )
 
@@ -444,7 +444,7 @@ def save_cross_validation_results(output_dir, fold_metrics):
 
     print(f"Cross-validation results saved to {results_path}")
 
-def create_binary_dataset(original_dataset, class_mapping=None):
+def create_binary_dataset(original_dataset, class_mapping):
     """
     Convert a multi-class dataset into a binary dataset.
 
@@ -455,16 +455,24 @@ def create_binary_dataset(original_dataset, class_mapping=None):
     Returns:
         binary_dataset: The modified dataset with binary labels.
     """
-    if class_mapping is None:
-        raise ValueError("class_mapping must be provided to map multi-class labels to binary labels.")
-
-    # Create a new dataset with binary labels
+    # Initialize the binary dataset
     binary_data = []
+
+    # Iterate through the original dataset
     for data, label in original_dataset:
+        # Convert the label (torch.Tensor) to an integer
+        label = int(label.item())
+        
+        # Map the label using class_mapping if it exists
         if label in class_mapping:
             binary_data.append((data, class_mapping[label]))
 
+    # Raise an error if the resulting dataset is empty
+    if not binary_data:
+        raise ValueError("The resulting binary dataset is empty. Check your class_mapping or dataset.")
+
     return binary_data
+
 
 
 def main(train_new_model=True, n_splits=2, binary_classification=True):
@@ -492,7 +500,7 @@ def main(train_new_model=True, n_splits=2, binary_classification=True):
         dataset,
         n_splits=n_splits,
         batch_size=4,
-        num_workers=4
+        num_workers=0
     )
 
     # Cross-validation loop
@@ -508,7 +516,7 @@ def main(train_new_model=True, n_splits=2, binary_classification=True):
 
         if train_new_model:
             print("Training a new model...")
-            criterion = nn.BCEWithLogitsLoss() if binary_classification else nn.CrossEntropyLoss()
+            criterion = nn.CrossEntropyLoss()
             num_epochs = 250
 
             # Train the model and track metrics
@@ -542,11 +550,11 @@ def main(train_new_model=True, n_splits=2, binary_classification=True):
         print("Evaluating the model on the test fold...")
         fold_accuracy = evaluate_model_on_test_fold(model, test_loader, device, fold_idx, num_classes=2 if binary_classification else 3)
         fold_metrics.append(fold_accuracy)
-        print(f"Fold {fold_idx + 1} Accuracy: {fold_accuracy:.2f}")
+        print(f"Fold {fold_idx + 1} Cohen's Kappa Score: {fold_accuracy:.2f}")
 
     # Summarize cross-validation results
     print("\nCross-validation complete.")
-    print(f"Average Accuracy Across Folds: {np.mean(fold_metrics):.2f}")
+    print(f"Average Cohen's Kappa Across Folds: {np.mean(fold_metrics):.2f}")
 
     # Save cross-validation results to a log file
     save_cross_validation_results(output_dir="./logs/", fold_metrics=fold_metrics)
