@@ -129,7 +129,7 @@ def create_balanced_sampler(dataset):
     return sampler
 
 def train_model(
-    model, train_loader, val_loader, criterion, optimizer, num_epochs=20, device="cpu", patience=25
+    model, train_loader, val_loader, criterion, optimizer, num_epochs=20, device="cpu", patience=5
 ):
     """
     Train a PyTorch model with early stopping and validation tracking.
@@ -152,7 +152,7 @@ def train_model(
     val_loss_history = []
     best_val_loss = float('inf')
     best_model_epoch = -1
-    epochs_without_improvement = 0  # Track epochs without validation improvement
+    epochs_without_improvement = -45  # train for a minimum of 50 epochs
 
     for epoch in range(num_epochs):
         model.train()
