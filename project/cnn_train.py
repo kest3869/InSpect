@@ -152,7 +152,7 @@ def train_model(
     val_loss_history = []
     best_val_loss = float('inf')
     best_model_epoch = -1
-    epochs_without_improvement = -45  # train for a minimum of 50 epochs
+    epochs_without_improvement = 0  # train for a minimum of 50 epochs
 
     for epoch in range(num_epochs):
         model.train()
@@ -208,7 +208,7 @@ def train_model(
         print(f"Epoch {epoch + 1}/{num_epochs}, Validation Loss: {val_loss:.4f}")
 
         # Stop training if no improvement for 'patience' epochs
-        if epochs_without_improvement >= patience:
+        if epochs_without_improvement >= patience and epoch > 50:
             print(f"Early stopping triggered after {patience} epochs without improvement.")
             break
 
@@ -480,7 +480,7 @@ def create_binary_dataset(original_dataset, class_mapping):
 
 
 
-def main(train_new_model=True, n_splits=2, binary_classification=False):
+def main(train_new_model=True, n_splits=5, binary_classification=True):
     """
     Main function for running stratified cross-validation on the dataset.
 
