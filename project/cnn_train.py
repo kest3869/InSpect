@@ -13,6 +13,8 @@ from torchvision.transforms import Compose, RandomApply, GaussianBlur, RandomAff
 from sklearn.metrics import cohen_kappa_score
 from load_data import create_torch_dataset
 from sklearn.model_selection import train_test_split
+import torchio as tio
+
 
 def validation_fnc(labels, predictions):
     """
@@ -20,13 +22,22 @@ def validation_fnc(labels, predictions):
     """
     return 1 - cohen_kappa_score(labels, predictions)
 
+
 def create_augmented_dataset():
-    transform = Compose([
-        RandomApply([GaussianBlur(kernel_size=3, sigma=1.5)], p=0.5),
-        RandomAffine(degrees=0, scale=(0.99, 1.03)),
+    transform = tio.Compose([
+        tio.RandomAffine(scales=(0.9, 1.1), degrees=(10, 10, 10)),  # 3D affine transformations
+        tio.RandomBlur(std=(0.5, 1.5)),  # 3D Gaussian blur
     ])
     return create_torch_dataset(transform=transform)
 
+'''
+def create_augmented_dataset():
+    transform = Compose([
+        RandomAffine(degrees=10, scale=(0.9, 1.1)),  # 2D affine transformations
+        GaussianBlur(kernel_size=(3, 3), sigma=(0.5, 1.5)),  # 2D Gaussian blur
+    ])
+    return create_torch_dataset(transform=transform)
+'''
 
 # citation: https://braininformatics.springeropen.com/articles/10.1186/s40708-021-00144-2#Sec3
 class SimpleCNN3D(nn.Module):
@@ -116,12 +127,6 @@ def create_balanced_sampler(dataset):
         replacement=True,
     )
     return sampler
-
-
-import os
-import torch
-from tqdm import tqdm
-
 
 def train_model(
     model, train_loader, val_loader, criterion, optimizer, num_epochs=20, device="cpu", patience=25
@@ -350,8 +355,8 @@ def evaluate_model_on_test_fold(model, data_loader, device, fold_idx, num_classe
     print(f"Classification report saved to: {report_path}")
 
     # Calculate metrics to return
-    balanced_accuracy = 1 - validation_fnc(all_labels, all_predictions)  # Refactored to give Cohen's Kappa score
-    return balanced_accuracy
+    cohens_kappa = 1 - validation_fnc(all_labels, all_predictions)  # Refactored to give Cohen's Kappa score
+    return cohens_kappa
 
 
 def stratified_cross_validation(dataset, n_splits=5, batch_size=2, num_workers=4, train_val_split=0.9):
@@ -475,7 +480,7 @@ def create_binary_dataset(original_dataset, class_mapping):
 
 
 
-def main(train_new_model=True, n_splits=2, binary_classification=True):
+def main(train_new_model=True, n_splits=2, binary_classification=False):
     """
     Main function for running stratified cross-validation on the dataset.
 
@@ -517,7 +522,7 @@ def main(train_new_model=True, n_splits=2, binary_classification=True):
         if train_new_model:
             print("Training a new model...")
             criterion = nn.CrossEntropyLoss()
-            num_epochs = 250
+            num_epochs = 150
 
             # Train the model and track metrics
             train_loss, val_loss, best_model_epoch = train_model(
