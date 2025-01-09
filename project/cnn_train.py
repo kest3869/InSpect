@@ -13,6 +13,8 @@ from torchvision.transforms import Compose, RandomApply, GaussianBlur, RandomAff
 from sklearn.metrics import cohen_kappa_score
 from load_data import create_torch_dataset
 from sklearn.model_selection import train_test_split
+import torchio as tio
+
 
 def validation_fnc(labels, predictions):
     """
@@ -20,13 +22,22 @@ def validation_fnc(labels, predictions):
     """
     return 1 - cohen_kappa_score(labels, predictions)
 
+
 def create_augmented_dataset():
-    transform = Compose([
-        RandomApply([GaussianBlur(kernel_size=3, sigma=1.5)], p=0.5),
-        RandomAffine(degrees=0, scale=(0.99, 1.03)),
+    transform = tio.Compose([
+        tio.RandomAffine(scales=(0.9, 1.1), degrees=(10, 10, 10)),  # 3D affine transformations
+        tio.RandomBlur(std=(0.5, 1.5)),  # 3D Gaussian blur
     ])
     return create_torch_dataset(transform=transform)
 
+'''
+def create_augmented_dataset():
+    transform = Compose([
+        RandomAffine(degrees=10, scale=(0.9, 1.1)),  # 2D affine transformations
+        GaussianBlur(kernel_size=(3, 3), sigma=(0.5, 1.5)),  # 2D Gaussian blur
+    ])
+    return create_torch_dataset(transform=transform)
+'''
 
 # citation: https://braininformatics.springeropen.com/articles/10.1186/s40708-021-00144-2#Sec3
 class SimpleCNN3D(nn.Module):
@@ -117,9 +128,8 @@ def create_balanced_sampler(dataset):
     )
     return sampler
 
-
 def train_model(
-    model, train_loader, val_loader, criterion, optimizer, num_epochs=20, device="cpu", patience=15
+    model, train_loader, val_loader, criterion, optimizer, num_epochs=20, device="cpu", patience=25
 ):
     """
     Train a PyTorch model with early stopping and validation tracking.
@@ -167,7 +177,6 @@ def train_model(
         # Validation phase
         model.eval()
         val_loss = 0.0
-        all_labels, all_predictions = [], []
         with torch.no_grad():
             for inputs, labels in val_loader:  # Use val_loader for validation
                 # Ensure inputs and labels are moved to the correct device
@@ -176,14 +185,11 @@ def train_model(
                 # Forward pass
                 outputs = model(inputs)
 
-                # Get predictions
-                _, preds = torch.max(outputs, dim=1)
+                # Compute validation loss for this batch
+                val_loss += criterion(outputs, labels).item()
 
-                # Collect true labels and predictions
-                all_labels.extend(labels.cpu().numpy())
-                all_predictions.extend(preds.cpu().numpy())
-
-        val_loss = validation_fnc(all_labels, all_predictions)
+        # Calculate average validation loss for the epoch
+        val_loss /= len(val_loader)
         val_loss_history.append(val_loss)
 
         # Early stopping check
@@ -207,7 +213,6 @@ def train_model(
             break
 
     return train_loss_history, val_loss_history, best_model_epoch
-
 
 
 def plot_training_and_validation(train_loss, val_loss, best_model_epoch, output_dir="figs", output_file="training_validation_plot.jpg"):
@@ -290,7 +295,7 @@ def save_model_and_logs(
     print(f"Training details log saved to: {log_path}")
 
 
-def evaluate_model_on_test_fold(model, data_loader, device, fold_idx):
+def evaluate_model_on_test_fold(model, data_loader, device, fold_idx, num_classes=3):
     """
     Evaluate the model on the validation/test fold and save metrics for the fold.
 
@@ -299,6 +304,7 @@ def evaluate_model_on_test_fold(model, data_loader, device, fold_idx):
         data_loader: DataLoader for the validation/test fold.
         device: The device ('cuda' or 'cpu') on which the model is running.
         fold_idx: Current fold index (for saving results with fold-specific names).
+        num_classes: Number of classes in the classification task (default: 3).
 
     Returns:
         balanced_accuracy: Balanced accuracy for the fold.
@@ -325,14 +331,16 @@ def evaluate_model_on_test_fold(model, data_loader, device, fold_idx):
             all_predictions.extend(preds.cpu().numpy())
 
     # Generate confusion matrix
-    cm = confusion_matrix(all_labels, all_predictions, labels=list(range(3)))
-    cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+    class_labels = list(range(num_classes))
+    target_names = [f"Class {i}" for i in class_labels] if num_classes > 2 else ["Negative", "Positive"]
+    cm = confusion_matrix(all_labels, all_predictions, labels=class_labels)
+    cm_normalized = cm.astype('float') / cm.sum(axis=1, keepdims=True)
 
     # Save confusion matrix plot
     output_dir = f"fold_{fold_idx + 1}_results"
     os.makedirs(output_dir, exist_ok=True)
     cm_path = os.path.join(output_dir, f"confusion_matrix_fold_{fold_idx + 1}.jpg")
-    disp = ConfusionMatrixDisplay(confusion_matrix=cm_normalized, display_labels=["healthy", "ptsd", "pure_Mdd"])
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm_normalized, display_labels=target_names)
     disp.plot(cmap=plt.cm.Blues)
     plt.title(f"Confusion Matrix (Fold {fold_idx + 1})")
     plt.savefig(cm_path, dpi=300)
@@ -340,16 +348,15 @@ def evaluate_model_on_test_fold(model, data_loader, device, fold_idx):
     print(f"Confusion matrix saved to: {cm_path}")
 
     # Save classification report
-    report = classification_report(all_labels, all_predictions, target_names=["healthy", "ptsd", "pure_Mdd"], digits=2)
+    report = classification_report(all_labels, all_predictions, target_names=target_names, digits=2)
     report_path = os.path.join(output_dir, f"classification_report_fold_{fold_idx + 1}.txt")
     with open(report_path, "w") as f:
         f.write(report)
     print(f"Classification report saved to: {report_path}")
 
     # Calculate metrics to return
-    
-    balanced_accuracy = 1 - validation_fnc(all_labels, all_predictions) # REFACTORED TO GIVE COHEN KAPPA SCORE
-    return balanced_accuracy
+    cohens_kappa = 1 - validation_fnc(all_labels, all_predictions)  # Refactored to give Cohen's Kappa score
+    return cohens_kappa
 
 
 def stratified_cross_validation(dataset, n_splits=5, batch_size=2, num_workers=4, train_val_split=0.9):
@@ -399,20 +406,20 @@ def stratified_cross_validation(dataset, n_splits=5, batch_size=2, num_workers=4
             dataset=train_subset,
             batch_size=batch_size,
             sampler=train_sampler,
-            pin_memory=True,
+            pin_memory=False,
             num_workers=num_workers
         )
         val_loader = DataLoader(
             dataset=val_subset,
             batch_size=batch_size,
             sampler=val_sampler,
-            pin_memory=True,
+            pin_memory=False,
             num_workers=num_workers
         )
         test_loader = DataLoader(
             dataset=test_subset,
             batch_size=batch_size,
-            pin_memory=True,
+            pin_memory=False,
             num_workers=num_workers
         )
 
@@ -442,27 +449,63 @@ def save_cross_validation_results(output_dir, fold_metrics):
 
     print(f"Cross-validation results saved to {results_path}")
 
+def create_binary_dataset(original_dataset, class_mapping):
+    """
+    Convert a multi-class dataset into a binary dataset.
 
-def main(train_new_model=True, n_splits=5):
+    Args:
+        original_dataset: The original PyTorch dataset with multi-class labels.
+        class_mapping (dict): A dictionary mapping original labels to binary labels.
+
+    Returns:
+        binary_dataset: The modified dataset with binary labels.
+    """
+    # Initialize the binary dataset
+    binary_data = []
+
+    # Iterate through the original dataset
+    for data, label in original_dataset:
+        # Convert the label (torch.Tensor) to an integer
+        label = int(label.item())
+        
+        # Map the label using class_mapping if it exists
+        if label in class_mapping:
+            binary_data.append((data, class_mapping[label]))
+
+    # Raise an error if the resulting dataset is empty
+    if not binary_data:
+        raise ValueError("The resulting binary dataset is empty. Check your class_mapping or dataset.")
+
+    return binary_data
+
+
+
+def main(train_new_model=True, n_splits=2, binary_classification=False):
     """
     Main function for running stratified cross-validation on the dataset.
 
     Args:
         train_new_model (bool): Whether to train a new model or load a pre-trained one.
         n_splits (int): Number of folds for cross-validation.
-        sample_validation (bool): Whether to use balanced sampling for validation.
+        binary_classification (bool): Whether to perform binary or multi-class classification.
     """
     print("Loading dataset...")
 
     # Load augmented dataset
     dataset = create_augmented_dataset()
 
+    # Convert dataset for binary classification if required
+    if binary_classification:
+        print("Converting dataset to binary classification...")
+        class_mapping = {0: 0, 1: 1, 2: 1}  # Combine classes 1 and 2 into class 1
+        dataset = create_binary_dataset(dataset, class_mapping)
+
     # Get stratified cross-validation folds with balanced sampling
     folds = stratified_cross_validation(
         dataset,
         n_splits=n_splits,
         batch_size=4,
-        num_workers=4
+        num_workers=0
     )
 
     # Cross-validation loop
@@ -471,7 +514,7 @@ def main(train_new_model=True, n_splits=5):
         print(f"\n--- Fold {fold_idx + 1}/{n_splits} ---")
 
         # Define model and optimizer
-        model = SimpleCNN3D(input_channels=1, num_classes=3)
+        model = SimpleCNN3D(input_channels=1, num_classes=2 if binary_classification else 3)
         optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=0.00005)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model.to(device)
@@ -479,7 +522,7 @@ def main(train_new_model=True, n_splits=5):
         if train_new_model:
             print("Training a new model...")
             criterion = nn.CrossEntropyLoss()
-            num_epochs = 250
+            num_epochs = 150
 
             # Train the model and track metrics
             train_loss, val_loss, best_model_epoch = train_model(
@@ -497,6 +540,7 @@ def main(train_new_model=True, n_splits=5):
                 output_dir=f"trained_models/fold_{fold_idx + 1}",
                 fold_idx=fold_idx,
                 metadata={
+                    "binary_classification": binary_classification,
                     "n_splits": n_splits,
                     "num_epochs": num_epochs,
                     "optimizer": optimizer.__class__.__name__,
@@ -509,17 +553,16 @@ def main(train_new_model=True, n_splits=5):
 
         # Evaluate the model on the test fold
         print("Evaluating the model on the test fold...")
-        fold_accuracy = evaluate_model_on_test_fold(model, test_loader, device, fold_idx)
+        fold_accuracy = evaluate_model_on_test_fold(model, test_loader, device, fold_idx, num_classes=2 if binary_classification else 3)
         fold_metrics.append(fold_accuracy)
-        print(f"Fold {fold_idx + 1} Cohen Kappa: {fold_accuracy:.2f}")
+        print(f"Fold {fold_idx + 1} Cohen's Kappa Score: {fold_accuracy:.2f}")
 
     # Summarize cross-validation results
     print("\nCross-validation complete.")
-    print(f"Average Cohen Kappa Across Folds: {np.mean(fold_metrics):.2f}")
+    print(f"Average Cohen's Kappa Across Folds: {np.mean(fold_metrics):.2f}")
 
     # Save cross-validation results to a log file
     save_cross_validation_results(output_dir="./logs/", fold_metrics=fold_metrics)
-
 
 
 if __name__ == "__main__":
