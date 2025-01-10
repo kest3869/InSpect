@@ -11,7 +11,7 @@ from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, classifica
 from torch.optim.lr_scheduler import StepLR
 from torchvision.transforms import Compose, RandomApply, GaussianBlur, RandomAffine
 from sklearn.metrics import cohen_kappa_score
-from load_data import create_torch_dataset
+from load_data import create_torch_dataset, BinaryDataset
 from sklearn.model_selection import train_test_split
 import torchio as tio
 
@@ -30,14 +30,6 @@ def create_augmented_dataset():
     ])
     return create_torch_dataset(transform=transform)
 
-'''
-def create_augmented_dataset():
-    transform = Compose([
-        RandomAffine(degrees=10, scale=(0.9, 1.1)),  # 2D affine transformations
-        GaussianBlur(kernel_size=(3, 3), sigma=(0.5, 1.5)),  # 2D Gaussian blur
-    ])
-    return create_torch_dataset(transform=transform)
-'''
 
 # citation: https://braininformatics.springeropen.com/articles/10.1186/s40708-021-00144-2#Sec3
 class SimpleCNN3D(nn.Module):
@@ -197,6 +189,7 @@ def train_model(
             best_val_loss = val_loss
             best_model_epoch = epoch
             best_model_state = model.state_dict()
+            os.makedirs("figs", exist_ok=True)
             best_model_path = os.path.join(os.getcwd(), 'figs/best_model.pth')
             torch.save(best_model_state, best_model_path)
             epochs_without_improvement = 0  # Reset the counter if there is improvement
@@ -208,7 +201,7 @@ def train_model(
         print(f"Epoch {epoch + 1}/{num_epochs}, Validation Loss: {val_loss:.4f}")
 
         # Stop training if no improvement for 'patience' epochs
-        if epochs_without_improvement >= patience and epoch > 0:
+        if epochs_without_improvement >= patience and epoch > 100:
             print(f"Early stopping triggered after {patience} epochs without improvement.")
             break
 
@@ -480,7 +473,7 @@ def create_binary_dataset(original_dataset, class_mapping):
 
 
 
-def main(train_new_model=True, n_splits=3, binary_classification=False):
+def main(train_new_model=True, n_splits=3, binary_classification=True, binary_classification_type='mdd_vs_ptsd'):
     """
     Main function for running stratified cross-validation on the dataset.
 
@@ -494,11 +487,23 @@ def main(train_new_model=True, n_splits=3, binary_classification=False):
     # Load augmented dataset
     dataset = create_augmented_dataset()
 
-    # Convert dataset for binary classification if required
     if binary_classification:
         print("Converting dataset to binary classification...")
-        class_mapping = {0: 0, 1: 1, 2: 1}  # Combine classes 1 and 2 into class 1
-        dataset = create_binary_dataset(dataset, class_mapping)
+
+        # Define class mapping and exclusions based on binary_classification_type
+        if binary_classification_type == 'healthy_vs_unhealthy':
+            class_mapping = {0: 0, 1: 1, 2: 1}  # Healthy (0) vs. Unhealthy (1 and 2)
+            exclude_classes = []  # No classes are excluded
+        elif binary_classification_type == 'mdd_vs_ptsd':
+            class_mapping = {1: 0, 2: 1}  # PTSD (1) vs. MDD (2)
+            exclude_classes = [0]  # Exclude Healthy (0)
+        else:
+            raise ValueError("Invalid binary_classification_type. Choose 'healthy_vs_unhealthy' or 'mdd_vs_ptsd'.")
+
+        # Create binary dataset
+        dataset = BinaryDataset(dataset, class_mapping, exclude_classes)
+    # Example: Print dataset size
+    print(f"Dataset size: {len(dataset)}")
 
     # Get stratified cross-validation folds with balanced sampling
     folds = stratified_cross_validation(
@@ -522,7 +527,7 @@ def main(train_new_model=True, n_splits=3, binary_classification=False):
         if train_new_model:
             print("Training a new model...")
             criterion = nn.CrossEntropyLoss()
-            num_epochs = 150
+            num_epochs = 250
 
             # Train the model and track metrics
             train_loss, val_loss, best_model_epoch = train_model(
@@ -541,6 +546,7 @@ def main(train_new_model=True, n_splits=3, binary_classification=False):
                 fold_idx=fold_idx,
                 metadata={
                     "binary_classification": binary_classification,
+                    "binary_classification type": binary_classification_type,
                     "n_splits": n_splits,
                     "num_epochs": num_epochs,
                     "optimizer": optimizer.__class__.__name__,

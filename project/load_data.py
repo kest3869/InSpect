@@ -131,6 +131,50 @@ def create_torch_dataset(
     return torch_dataset
 
 
+class BinaryDataset(Dataset):
+    """
+    A custom Dataset for converting a multi-class dataset into binary classification.
+    """
+    def __init__(self, original_dataset, class_mapping, exclude_classes=None):
+        """
+        Args:
+            original_dataset (Dataset): The original PyTorch dataset with multi-class labels.
+            class_mapping (dict): A dictionary mapping original labels to binary labels.
+            exclude_classes (list or set, optional): Classes to exclude from the dataset.
+        """
+        self.original_dataset = original_dataset
+        self.class_mapping = class_mapping
+        self.exclude_classes = set(exclude_classes) if exclude_classes else set()
+
+        # Filter and map the dataset
+        self.binary_data = self._filter_and_map()
+
+    def _filter_and_map(self):
+        binary_data = []
+        for data, label in self.original_dataset:
+            # Convert label to an integer
+            label = int(label.item())
+            
+            # Skip excluded classes
+            if label in self.exclude_classes:
+                continue
+            
+            # Map the label if it exists in class_mapping
+            if label in self.class_mapping:
+                binary_data.append((data, self.class_mapping[label]))
+        
+        # Raise an error if the resulting dataset is empty
+        if not binary_data:
+            raise ValueError("The resulting binary dataset is empty. Check your class_mapping, exclude_classes, or dataset.")
+        
+        return binary_data
+
+    def __len__(self):
+        return len(self.binary_data)
+
+    def __getitem__(self, idx):
+        return self.binary_data[idx]
+
 
 def main():
     top_dir = '/home/InSpect/data/datasets'
