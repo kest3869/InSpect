@@ -129,7 +129,7 @@ def create_balanced_sampler(dataset):
     return sampler
 
 def train_model(
-    model, train_loader, val_loader, criterion, optimizer, num_epochs=20, device="cpu", patience=5
+    model, train_loader, val_loader, criterion, optimizer, num_epochs=20, device="cpu", patience=25
 ):
     """
     Train a PyTorch model with early stopping and validation tracking.
@@ -208,7 +208,7 @@ def train_model(
         print(f"Epoch {epoch + 1}/{num_epochs}, Validation Loss: {val_loss:.4f}")
 
         # Stop training if no improvement for 'patience' epochs
-        if epochs_without_improvement >= patience and epoch > 50:
+        if epochs_without_improvement >= patience and epoch > 0:
             print(f"Early stopping triggered after {patience} epochs without improvement.")
             break
 
@@ -359,7 +359,7 @@ def evaluate_model_on_test_fold(model, data_loader, device, fold_idx, num_classe
     return cohens_kappa
 
 
-def stratified_cross_validation(dataset, n_splits=5, batch_size=2, num_workers=4, train_val_split=0.9):
+def stratified_cross_validation(dataset, n_splits=5, batch_size=2, num_workers=4, train_val_split=0.8):
     """
     Perform stratified cross-validation with train, validation, and test splits.
 
@@ -480,7 +480,7 @@ def create_binary_dataset(original_dataset, class_mapping):
 
 
 
-def main(train_new_model=True, n_splits=5, binary_classification=True):
+def main(train_new_model=True, n_splits=3, binary_classification=False):
     """
     Main function for running stratified cross-validation on the dataset.
 
