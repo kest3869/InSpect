@@ -18,5 +18,5 @@ Kevin Brar
 
 CU Boulder graduate student in applied mathematics 
 
-kest3869@colorado.edu
+kevinbrar2024@gmail.com
 
