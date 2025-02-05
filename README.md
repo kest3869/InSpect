@@ -14,7 +14,7 @@ Classifying SPECT scans of psychiatric pathologies using deep learning technique
 Contains first iteration of project coded in jupyter notebooks which used keras
 
 ### Author Details 
-Kevin Stull 
+Kevin Brar
 
 CU Boulder graduate student in applied mathematics 
 
