@@ -8,8 +8,6 @@ from torch.utils.data import DataLoader, WeightedRandomSampler, Subset
 from tqdm import tqdm
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, classification_report
-from torch.optim.lr_scheduler import StepLR
-from torchvision.transforms import Compose, RandomApply, GaussianBlur, RandomAffine
 from sklearn.metrics import cohen_kappa_score
 from load_data import create_torch_dataset, BinaryDataset
 from sklearn.model_selection import train_test_split
